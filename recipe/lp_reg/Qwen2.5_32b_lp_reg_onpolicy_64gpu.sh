@@ -45,7 +45,7 @@ train_prompt_bsz=256
 gen_prompt_bsz=256
 train_prompt_mini_bsz=256
 n_resp_per_prompt=8
-max_token=$((1024 * 30))
+max_token=$((1024 * 20))
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}

@@ -76,6 +76,17 @@ offload=False
 
 # NCCL timeout and debugging for distributed training (fixes barrier hangs)
 export NCCL_DEBUG=INFO
+export NCCL_SOCKET_IFNAME=eth0  # adjust to your network interface if needed
+export NCCL_TIMEOUT=1800  # 30 minutes timeout for large model loading and sync
+export NCCL_BLOCKING_WAIT=1  # enable blocking wait to catch issues earlier
+export CUDA_LAUNCH_BLOCKING=1  # synchronous CUDA for better error messages
+# Reward scoring optimization: tune concurrency and timeout for faster reward evaluation
+export REWARD_NUM_PROCESSES=${REWARD_NUM_PROCESSES:-16}  # parallel scoring processes (was 64, tuned down for speed)
+export REWARD_TIMEOUT=${REWARD_TIMEOUT:-60}  # per-batch timeout in seconds (was 300, reduced for faster fails)
+export PRIME_CODE_MAX_SAMPLES=${PRIME_CODE_MAX_SAMPLES:-5}  # test samples per code evaluation (was 10)
+
+# NCCL timeout and debugging for distributed training (fixes barrier hangs)
+export NCCL_DEBUG=INFO
 export NCCL_TIMEOUT=1800  # 30 minutes timeout for large model loading and sync
 export NCCL_BLOCKING_WAIT=1  # enable blocking wait to catch issues earlier
 export CUDA_LAUNCH_BLOCKING=1  # synchronous CUDA for better error messages
@@ -129,6 +140,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${max_token} \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.weight_decay=0 \

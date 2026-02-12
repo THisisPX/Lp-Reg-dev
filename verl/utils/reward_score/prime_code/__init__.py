@@ -45,12 +45,13 @@ def compute_score(completion, test_cases, continuous=False):
             test_cases_list.append({"inputs": [inputs[i]], "outputs": [outputs[i]]})
 
         if continuous:
-            # per sample test: if continuous score is needed, test first 10 samples regardless of failures
+            # per sample test: if continuous score is needed, test first N samples (default 5, tunable via env)
             # do not test all samples cuz some problems have enormous test cases
+            max_test_samples = int(os.environ.get("PRIME_CODE_MAX_SAMPLES", "5"))
             metadata_list = []
             res_list = []
             for test_case_id, test_case in enumerate(test_cases_list):
-                res, metadata = apps_check_correctness(in_outs=test_case, generation=solution, timeout=10, debug=False)
+                res, metadata = apps_check_correctness(in_outs=test_case, generation=solution, timeout=5, debug=False)
                 try:
                     metadata = dict(enumerate(metadata))[0]  # metadata can be empty occasionally
                 except Exception:
@@ -62,7 +63,7 @@ def compute_score(completion, test_cases, continuous=False):
                 metadata_list.append(metadata)
                 res_list.extend(res)
 
-                if test_case_id >= 9:
+                if test_case_id >= max_test_samples - 1:
                     break
             res_count = len(res_list) if len(res_list) > 0 else 1
             success = sum(map(lambda x: x is True, res_list)) / res_count

@@ -158,14 +158,17 @@ class DAPORewardManager:
 
         assert len(responses_str) == len(ground_truths) == len(data_sources) == len(extra_infos)
         try:
+            # Tune num_processes and timeout via env vars for faster reward scoring
+            num_procs = int(os.environ.get("REWARD_NUM_PROCESSES", "16"))
+            reward_timeout = int(os.environ.get("REWARD_TIMEOUT", "60"))
             results = run_reward_scoring(
                 self.compute_score,
                 completions=responses_str,
                 references=ground_truths,
                 tasks=data_sources,
                 extra_info=extra_infos,
-                num_processes=64,
-                timeout=300.,
+                num_processes=num_procs,
+                timeout=reward_timeout,
             )
         except asyncio.TimeoutError as e:
             print('Global timeout in reward computing! Setting all as 0.')

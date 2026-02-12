@@ -85,6 +85,18 @@ export REWARD_NUM_PROCESSES=${REWARD_NUM_PROCESSES:-16}  # parallel scoring proc
 export REWARD_TIMEOUT=${REWARD_TIMEOUT:-60}  # per-batch timeout in seconds (was 300, reduced for faster fails)
 export PRIME_CODE_MAX_SAMPLES=${PRIME_CODE_MAX_SAMPLES:-5}  # test samples per code evaluation (was 10)
 
+# NCCL timeout and debugging for distributed training (fixes barrier hangs)
+export NCCL_DEBUG=INFO
+export NCCL_TIMEOUT=1800  # 30 minutes timeout for large model loading and sync
+export NCCL_BLOCKING_WAIT=1  # enable blocking wait to catch issues earlier
+export CUDA_LAUNCH_BLOCKING=1  # synchronous CUDA for better error messages
+
+export NCCL_SOCKET_IFNAME=lo
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
+export NCCL_DEBUG=INFO
+
+
 HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${TEST_FILE}" \
@@ -129,6 +141,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.model.path="${MODEL_PATH}" \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
+    actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.weight_decay=0 \
     actor_rollout_ref.actor.optim.warmup_style=constant \
@@ -166,8 +179,8 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     ++trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
-    trainer.val_before_train=False \
-    trainer.test_freq=0 \
+    trainer.val_before_train=True \
+    trainer.test_freq=20 \
     trainer.save_freq=64 \
     trainer.total_epochs=15 \
     trainer.save_train_samples_freq=32 \

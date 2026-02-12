@@ -32,7 +32,7 @@ clip_ratio_low=1.0
 clip_ratio_high=9.0
 
 max_prompt_length=$((1024 * 2))
-max_response_length=$((1024 * 8))
+max_response_length=2048
 enable_overlong_buffer=False
 overlong_buffer_len=512
 overlong_penalty_factor=1.0
@@ -41,11 +41,11 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=-1
-train_prompt_bsz=256
-gen_prompt_bsz=256
-train_prompt_mini_bsz=256
-n_resp_per_prompt=8
-max_token=$((1024 * 30))
+train_prompt_bsz=32
+gen_prompt_bsz=32
+train_prompt_mini_bsz=32
+n_resp_per_prompt=1
+max_token=$((1024 * 8))
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}

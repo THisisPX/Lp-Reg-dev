@@ -58,8 +58,10 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-4B"}
 
 CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
-TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/DAPO-Math-17K/data/dapo-math-17k.parquet"}
-TEST_FILE=/nfs_global/S/pengxiong/dataset/DAPO-Math-17K/data/dapo-math-17k.parquet
+# NOTE: switching dataset to the code corpus. Changing datasets may require
+# adjustments to the reward function and reward-model configuration.
+TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/train-code.parquet"}
+TEST_FILE=/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/validation-code.parquet
 # Algorithm
 temperature=1.0
 top_p=1.0

@@ -113,6 +113,16 @@ unset HIP_VISIBLE_DEVICES
 export RAY_ADDRESS=local
 export RAY_DISABLE_AUTOMATIC_REDIS_CONNECTION=1
 
+export HF_HOME=/nfs_global/S/pengxiong/.cache/huggingface
+export TRANSFORMERS_CACHE=$HF_HOME
+export HF_DATASETS_CACHE=$HF_HOME/datasets
+
+export TORCH_HOME=/nfs_global/S/pengxiong/.cache/torch
+# export RAY_TMPDIR=/nfs_global/S/pengxiong/ray_tmp
+export RAY_TMPDIR=/workspace/S/pengxiong/ray_tmp
+
+
+
 # export TRANSFORMERS_NO_FLASH_ATTENTION=1
 export LD_LIBRARY_PATH=/home/S/pengxiong/anaconda3/lib:$LD_LIBRARY_PATH
 # export RAY_TMPDIR=/nfs_global/S/pengxiong/ray_tmp
@@ -141,6 +151,8 @@ export LD_LIBRARY_PATH=/home/S/pengxiong/anaconda3/lib:$LD_LIBRARY_PATH
 # # 再保险（防止自动 fallback）
 # export VLLM_ATTENTION_BACKEND=TORCH
 
+
+ip -o link show | awk -F': ' '{print $2}'
 
 bash /workspace/S/pengxiong/verl_proj/Lp-Reg-dev/recipe/lp_reg/Qwen3_14b_lp_reg_onpolicy_test.sh
 

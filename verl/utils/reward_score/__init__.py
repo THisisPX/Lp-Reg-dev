@@ -14,9 +14,20 @@
 # from . import gsm8k, math, prime_math, prime_code
 
 import traceback
+
 from . import prime_math
 
-def _default_compute_score(data_source, solution_str, ground_truth, extra_info=None, sandbox_fusion_url=None, concurrent_semaphore=None, zero=False, use_compute_score_v2=False):
+
+def _default_compute_score(
+    data_source,
+    solution_str,
+    ground_truth,
+    extra_info=None,
+    sandbox_fusion_url=None,
+    concurrent_semaphore=None,
+    zero=False,
+    use_compute_score_v2=False,
+):
     # if data_source == "openai/gsm8k":
     #     from . import gsm8k
 
@@ -67,7 +78,22 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
     #     res = geo3k.compute_score(solution_str, ground_truth)
     # else:d
     try:
-        if zero:
+        if data_source in {"codecontests", "apps", "codeforces", "taco", "prime_code", "code"}:
+            if sandbox_fusion_url:
+                from . import sandbox_fusion
+
+                res = sandbox_fusion.compute_score(
+                    sandbox_fusion_url,
+                    concurrent_semaphore,
+                    solution_str,
+                    ground_truth,
+                    continuous=True,
+                )
+            else:
+                from . import prime_code
+
+                res = prime_code.compute_score(solution_str, ground_truth, continuous=True)
+        elif zero:
             if not use_compute_score_v2:
                 res = prime_math.compute_score(solution_str, str(ground_truth))
             else:

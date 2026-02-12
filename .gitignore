@@ -1,0 +1,16 @@
+# Logs
+*.log
+ret-*.err
+ret-*.out
+
+# Training outputs
+outputs/
+tensorboard_log/
+figures/
+
+# Python
+__pycache__/
+*.pyc
+
+# SLURM
+*.slurm.out

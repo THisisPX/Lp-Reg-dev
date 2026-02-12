@@ -5,8 +5,8 @@ set -xeuo pipefail
 # export VLLM_USE_V1=1
 
 # entity_name="your_wandb_entity"
-project_name="your_wandb_project"
-exp_name="Qwen3_14b_lp_reg_onpolicy_64gpu/$(date +%Y%m%d_%H%M%S)"
+project_name="lp-reg"
+exp_name="Qwen3_8b_lp_reg_onpolicy_gpu/$(date +%Y%m%d_%H%M%S)"
 
 adv_estimator=grpo
 
@@ -51,14 +51,15 @@ max_token=$((1024 * 30))
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
-NNODES=${NNODES:-8} # set your node number here
+NNODES=1 # set your node number here
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"/model_path/Qwen3-14B-Base"}
-CKPTS_DIR=${CKPTS_DIR:-"/ckpt_dir/$project_name/$exp_name"}
-TRAIN_FILE=${TRAIN_FILE:-"/data_path/dapo-math-17k.parquet"}
-TEST_FILE=${TEST_FILE:-["/data_path/test.parquet"]}
+# MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-8B-Base"}
+MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-4B"}
 
+CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
+TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/DAPO-Math-17K/data/dapo-math-17k.parquet"}
+TEST_FILE=/nfs_global/S/pengxiong/dataset/DAPO-Math-17K/data/dapo-math-17k.parquet
 # Algorithm
 temperature=1.0
 top_p=1.0
@@ -146,14 +147,13 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console','wandb'] \
-    ++trainer.entity_name="${entity_name}" \
+    trainer.logger=['console','tensorboard'] \
     ++trainer.project_name="${project_name}" \
     ++trainer.experiment_name="${exp_name}" \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=False \
-    trainer.test_freq=8 \
+    trainer.test_freq=0 \
     trainer.save_freq=64 \
     trainer.total_epochs=15 \
     trainer.save_train_samples_freq=32 \

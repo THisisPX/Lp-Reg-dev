@@ -6,7 +6,12 @@ set -xeuo pipefail
 
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
-exp_name="Qwen3_8b_lp_reg_onpolicy_gpu/$(date +%Y%m%d_%H%M%S)"
+exp_name="Qwen3_1_5b_lp_reg_onpolicy_gpu-$(date +%Y%m%d_%H%M%S)"
+
+# Logs directory
+LOGS_DIR="${PWD}/logs"
+mkdir -p "${LOGS_DIR}"
+LOG_FILE="${LOGS_DIR}/${exp_name}.log"
 
 adv_estimator=grpo
 
@@ -41,10 +46,10 @@ loss_agg_mode="token-mean"
 enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=-1
-train_prompt_bsz=32
+train_prompt_bsz=512
 gen_prompt_bsz=32
-train_prompt_mini_bsz=32
-n_resp_per_prompt=1
+train_prompt_mini_bsz=256
+n_resp_per_prompt=5
 max_token=$((1024 * 8))
 
 # Ray
@@ -55,7 +60,7 @@ NNODES=1 # set your node number here
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 # MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-8B-Base"}
-MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-4B"}
+MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
 
 CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
 # NOTE: switching dataset to the code corpus. Changing datasets may require
@@ -96,6 +101,13 @@ export NCCL_IB_DISABLE=1
 export NCCL_NET=Socket
 export NCCL_DEBUG=INFO
 
+
+# Fix matplotlib warnings
+export MPLCONFIGDIR=/nfs_global/S/pengxiong/tmp/matplotlib_config
+
+# Enable bfloat16 for actor to speed up training and match Flash Attention
+# This is the KEY fix for slow step time and Flash Attention warnings
+export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     data.train_files="${TRAIN_FILE}" \
@@ -153,7 +165,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
@@ -182,7 +194,8 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     trainer.val_before_train=True \
     trainer.test_freq=20 \
     trainer.save_freq=64 \
-    trainer.total_epochs=15 \
+    trainer.total_epochs=5 \
     trainer.save_train_samples_freq=32 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable
+    trainer.resume_mode=disable \
+    2>&1 | tee "${LOG_FILE}"

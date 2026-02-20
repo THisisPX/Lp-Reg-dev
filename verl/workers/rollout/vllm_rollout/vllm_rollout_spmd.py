@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Union
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.distributed
 from omegaconf import DictConfig
 from tensordict import TensorDict
@@ -48,6 +49,13 @@ from verl.workers.rollout.base import BaseRollout
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+def _get_sequence_entropy_output_dir() -> str:
+    base_dir = os.environ.get("SEQUENCE_ENTROPY_OUTPUT_DIR")
+    if base_dir is None or len(base_dir.strip()) == 0:
+        base_dir = os.path.join(os.getcwd(), "outputs", "sequence_entropy")
+    return os.path.abspath(base_dir)
 
 # TODO
 # 1. support pp in vllm
@@ -72,8 +80,65 @@ def _repeat_interleave(value: Union[torch.Tensor, np.ndarray], repeats: int) -> 
         return np.repeat(value, repeats, axis=0)
 
 
+def visualize_sequence_entropy(
+    generated_ids: List[int],
+    step_logits: torch.Tensor,
+    tokenizer: Any,
+    beta: float,
+    tau: float,
+    sample_id: int,
+) -> None:
+    if len(generated_ids) == 0 or step_logits.numel() == 0:
+        return
+
+    step_logits = step_logits.float().detach().cpu()
+    probs = F.softmax(step_logits, dim=-1)
+    selected_ids = torch.tensor(generated_ids, dtype=torch.long)
+    token_prob = probs.gather(1, selected_ids.unsqueeze(1)).squeeze(1)
+    token_entropy = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=-1)
+    token_texts = tokenizer.convert_ids_to_tokens(generated_ids)
+
+    categories = []
+    colors = []
+    for p in token_prob.tolist():
+        if p >= beta:
+            categories.append("normal")
+            colors.append("gray")
+        elif p >= tau:
+            categories.append("reserved")
+            colors.append("red")
+        else:
+            categories.append("filtered")
+            colors.append("yellow")
+
+    output_dir = _get_sequence_entropy_output_dir()
+    os.makedirs(output_dir, exist_ok=True)
+
+    txt_path = os.path.join(output_dir, f"sample_{sample_id}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("token\tprob\tentropy\tcategory\n")
+        for token, prob, ent, category in zip(token_texts, token_prob.tolist(), token_entropy.tolist(), categories, strict=False):
+            f.write(f"{token}\t{prob:.6f}\t{ent:.6f}\t{category}\n")
+
+    try:
+        import matplotlib.pyplot as plt
+
+        positions = list(range(len(generated_ids)))
+        plt.figure(figsize=(max(8, len(generated_ids) * 0.3), 4))
+        plt.scatter(positions, token_entropy.tolist(), c=colors, s=25)
+        plt.plot(positions, token_entropy.tolist(), color="black", linewidth=0.8, alpha=0.6)
+        plt.xlabel("sequence position")
+        plt.ylabel("token entropy")
+        plt.xticks(positions, token_texts, rotation=90, fontsize=8)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"sample_{sample_id}.png"), dpi=200)
+        plt.close()
+    except Exception:
+        pass
+
+
 class vLLMRollout(BaseRollout):
-    def __init__(self, model_path: str, config: DictConfig, tokenizer, model_hf_config, **kwargs):
+    def __init__(self, model_path: str, config: DictConfig, tokenizer, model_hf_config, actor_module=None, **kwargs):
         """A vLLM rollout. It requires the module is supported by the vllm.
 
         Args:
@@ -190,6 +255,8 @@ class vLLMRollout(BaseRollout):
             
         self.sampling_params = SamplingParams(**kwargs)
 
+        self.actor_module = actor_module
+        self.tokenizer = tokenizer
         self.pad_token_id = tokenizer.pad_token_id
 
     @contextmanager
@@ -257,6 +324,9 @@ class vLLMRollout(BaseRollout):
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
         validate_temperature = prompts.meta_info.get('validate_temperature', 0.0)
+        beta = prompts.meta_info.get("sequence_entropy_beta", self.config.get("sequence_entropy_beta", 0.5))
+        tau = prompts.meta_info.get("sequence_entropy_tau", self.config.get("sequence_entropy_tau", self.config.get("min_p", 0.1)))
+        max_samples = prompts.meta_info.get("sequence_entropy_max_samples", self.config.get("sequence_entropy_max_samples", 3))
         if not do_sample:
             kwargs = {
                 "best_of": 1,
@@ -333,6 +403,34 @@ class vLLMRollout(BaseRollout):
             },
             batch_size=batch_size,
         )
+
+        if self.actor_module is not None and self.tokenizer is not None and max_samples > 0 and position_ids.dim() == 2:
+            sample_count = min(int(max_samples), int(batch_size))
+            if sample_count > 0:
+                self.actor_module.eval()
+                prompt_length = idx.size(1)
+                sample_seq = seq[:sample_count]
+                sample_attention_mask = attention_mask[:sample_count]
+                sample_position_ids = position_ids[:sample_count]
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    actor_out = self.actor_module(
+                        input_ids=sample_seq,
+                        attention_mask=sample_attention_mask,
+                        position_ids=sample_position_ids,
+                    )
+                response_length = response.size(1)
+                step_logits = actor_out.logits[:, prompt_length - 1 : prompt_length - 1 + response_length, :]
+                generated = response[:sample_count, :response_length]
+                for sample_id in range(sample_count):
+                    visualize_sequence_entropy(
+                        generated_ids=generated[sample_id].detach().cpu().tolist(),
+                        step_logits=step_logits[sample_id],
+                        tokenizer=self.tokenizer,
+                        beta=beta,
+                        tau=tau,
+                        sample_id=sample_id,
+                    )
+                self.actor_module.train()
 
         # free vllm cache engine
         if (

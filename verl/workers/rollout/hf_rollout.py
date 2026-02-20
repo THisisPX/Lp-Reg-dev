@@ -19,9 +19,11 @@ to perform generation.
 """
 
 import contextlib
+import os
 
 import torch
 import torch.distributed
+import torch.nn.functional as F
 from tensordict import TensorDict
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -35,22 +37,91 @@ from .base import BaseRollout
 __all__ = ["HFRollout"]
 
 
+def visualize_sequence_entropy(
+    generated_ids: list[int],
+    step_logits: torch.Tensor,
+    tokenizer,
+    beta: float,
+    tau: float,
+    sample_id: int,
+) -> None:
+    """Visualize token-level entropy along generated sequence."""
+    if len(generated_ids) == 0 or step_logits.numel() == 0:
+        return
+
+    step_logits = step_logits.float().detach().cpu()
+    probs = F.softmax(step_logits, dim=-1)
+
+    token_indices = torch.tensor(generated_ids, dtype=torch.long)
+    token_prob = probs.gather(1, token_indices.unsqueeze(1)).squeeze(1)
+
+    entropy = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=-1)
+    token_texts = tokenizer.convert_ids_to_tokens(generated_ids)
+
+    categories = []
+    colors = []
+    for p in token_prob.tolist():
+        if p >= beta:
+            categories.append("normal")
+            colors.append("gray")
+        elif p >= tau:
+            categories.append("reserved")
+            colors.append("red")
+        else:
+            categories.append("filtered")
+            colors.append("yellow")
+
+    output_dir = os.path.join("outputs", "sequence_entropy")
+    os.makedirs(output_dir, exist_ok=True)
+
+    txt_path = os.path.join(output_dir, f"sample_{sample_id}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write("token\tprob\tentropy\tcategory\n")
+        for token, p, h, cat in zip(token_texts, token_prob.tolist(), entropy.tolist(), categories, strict=False):
+            f.write(f"{token}\t{p:.6f}\t{h:.6f}\t{cat}\n")
+
+    try:
+        import matplotlib.pyplot as plt
+
+        positions = list(range(len(generated_ids)))
+        plt.figure(figsize=(max(8, len(generated_ids) * 0.3), 4))
+        plt.scatter(positions, entropy.tolist(), c=colors, s=25)
+        plt.plot(positions, entropy.tolist(), color="black", linewidth=0.8, alpha=0.6)
+        plt.xlabel("sequence position")
+        plt.ylabel("token entropy")
+        plt.xticks(positions, token_texts, rotation=90, fontsize=8)
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"sample_{sample_id}.png"), dpi=200)
+        plt.close()
+    except Exception:
+        # Keep generation robust if matplotlib is unavailable.
+        pass
+
+
 class HFRollout(BaseRollout):
-    def __init__(self, module: nn.Module, config):
+    def __init__(self, module: nn.Module, config, tokenizer=None):
         super().__init__()
         self.config = config
         self.module = module
+        self.tokenizer = tokenizer
 
     def generate_sequences(self, prompts: DataProto) -> DataProto:
         batch_size = prompts.batch.batch_size[0]
         num_chunks = max(batch_size // self.config.get("micro_batch_size", batch_size), 1)
         batch_prompts = prompts.chunk(chunks=num_chunks)
-        output = [self._generate_minibatch(p) for p in batch_prompts]
+        max_samples = self.config.get("sequence_entropy_max_samples", 3)
+        visualized = 0
+        output = []
+        for p in batch_prompts:
+            remaining = max(0, max_samples - visualized)
+            out, newly_visualized = self._generate_minibatch(p, sample_id_start=visualized, max_samples=remaining)
+            output.append(out)
+            visualized += newly_visualized
         output = DataProto.concat(output)
         return output
 
     @torch.no_grad()
-    def _generate_minibatch(self, prompts: DataProto) -> DataProto:
+    def _generate_minibatch(self, prompts: DataProto, sample_id_start: int = 0, max_samples: int = 3) -> tuple[DataProto, int]:
         # make sampling args can be overriden by inputs
         do_sample = prompts.meta_info.get("do_sample", self.config.do_sample)
         is_validate = prompts.meta_info.get("validate", False)
@@ -59,6 +130,8 @@ class HFRollout(BaseRollout):
         response_length = prompts.meta_info.get("response_length", self.config.response_length)
         top_p = prompts.meta_info.get("top_p", self.config.get("top_p", 1.0))
         top_k = max(0, prompts.meta_info.get("top_k", self.config.get("top_k", 0)))  # to be compatible with vllm
+        beta = prompts.meta_info.get("sequence_entropy_beta", self.config.get("sequence_entropy_beta", 0.5))
+        tau = prompts.meta_info.get("sequence_entropy_tau", self.config.get("sequence_entropy_tau", 0.1))
 
         if not do_sample:
             # do_sample==False -> greedy decoding
@@ -114,7 +187,7 @@ class HFRollout(BaseRollout):
                 eos_token_id=eos_token_id,
                 pad_token_id=pad_token_id,
                 generation_config=generation_config,
-                output_scores=False,  # this is potentially very large
+                output_scores=True,
                 return_dict_in_generate=True,
                 use_cache=True,
             )
@@ -143,6 +216,24 @@ class HFRollout(BaseRollout):
         prompt = seq[:, :prompt_length]  # (generated_batch_size, prompt_length)
         response = seq[:, prompt_length:]  # (generated_batch_size, response_length)
 
+        visualized_count = 0
+        if self.tokenizer is not None and max_samples > 0 and output.scores is not None:
+            num_steps = len(output.scores)
+            if num_steps > 0:
+                step_logits = torch.stack(output.scores, dim=0)  # [sequence_length, batch, vocab]
+                samples_to_process = min(max_samples, generated_batch_size)
+                for sample_offset in range(samples_to_process):
+                    generated_ids = response[sample_offset, :num_steps].detach().cpu().tolist()
+                    visualize_sequence_entropy(
+                        generated_ids=generated_ids,
+                        step_logits=step_logits[:, sample_offset, :],
+                        tokenizer=self.tokenizer,
+                        beta=beta,
+                        tau=tau,
+                        sample_id=sample_id_start + sample_offset,
+                    )
+                    visualized_count += 1
+
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
         delta_position_id = delta_position_id.unsqueeze(0).repeat(generated_batch_size, 1)
@@ -168,4 +259,4 @@ class HFRollout(BaseRollout):
         torch.cuda.empty_cache()
 
         self.module.train()
-        return DataProto(batch=batch)
+        return DataProto(batch=batch), visualized_count

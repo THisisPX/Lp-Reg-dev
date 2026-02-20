@@ -163,6 +163,10 @@ actor_rollout_ref:
     topn_metric: False
     # number of responses (i.e. num sample times)
     n: 1 # > 1 for grpo
+    # sequence entropy visualization
+    sequence_entropy_beta: 0.5
+    sequence_entropy_tau: 0.1
+    sequence_entropy_max_samples: 3
     engine_kwargs: # inference engine parameters
       swap_space: null # null means "use the engine default value" (usually 4 GB), setting it to, e.g., 32 means 32 GB
     val_kwargs:

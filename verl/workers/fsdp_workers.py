@@ -358,7 +358,7 @@ class ActorRolloutRefWorker(Worker):
             from verl.workers.rollout import HFRollout
             from verl.workers.sharding_manager.base import BaseShardingManager
 
-            rollout = HFRollout(module=self.actor_module_fsdp, config=self.config.rollout)
+            rollout = HFRollout(module=self.actor_module_fsdp, config=self.config.rollout, tokenizer=self.tokenizer)
             rollout_sharding_manager = BaseShardingManager()
 
         elif rollout_name == "vllm":
@@ -384,6 +384,7 @@ class ActorRolloutRefWorker(Worker):
                     config=self.config.rollout,
                     tokenizer=self.tokenizer,
                     model_hf_config=self.actor_model_config,
+                    actor_module=self.actor_module_fsdp,
                     device_mesh=rollout_device_mesh,
                     trust_remote_code=trust_remote_code,
                 )

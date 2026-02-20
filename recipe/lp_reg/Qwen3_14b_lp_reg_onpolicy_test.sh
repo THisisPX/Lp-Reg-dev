@@ -73,6 +73,11 @@ top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 ppo_kl_coef=1
 
+# sequence entropy visualization
+sequence_entropy_beta=0.5
+sequence_entropy_tau=0.1
+sequence_entropy_max_samples=3
+
 # Mathematically equivalent
 use_dynamic_bsz=True
 infer_micro_batch_size=null
@@ -104,6 +109,8 @@ export NCCL_DEBUG=INFO
 
 # Fix matplotlib warnings
 export MPLCONFIGDIR=/nfs_global/S/pengxiong/tmp/matplotlib_config
+export SEQUENCE_ENTROPY_OUTPUT_DIR="${PWD}/outputs/sequence_entropy"
+mkdir -p "${SEQUENCE_ENTROPY_OUTPUT_DIR}"
 
 # Enable bfloat16 for actor to speed up training and match Flash Attention
 # This is the KEY fix for slow step time and Flash Attention warnings
@@ -178,6 +185,9 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.rollout.val_kwargs.top_k=${top_k} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=False \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
+    actor_rollout_ref.rollout.sequence_entropy_beta=${sequence_entropy_beta} \
+    actor_rollout_ref.rollout.sequence_entropy_tau=${sequence_entropy_tau} \
+    actor_rollout_ref.rollout.sequence_entropy_max_samples=${sequence_entropy_max_samples} \
     actor_rollout_ref.ref.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=1 \

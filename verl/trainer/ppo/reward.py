@@ -19,7 +19,7 @@ from functools import partial
 import ray
 
 from verl import DataProto
-from verl.utils.reward_score import _default_compute_score
+from verl.utils.reward_score import _default_compute_score, _default_compute_score_with_extra_info
 
 
 def get_custom_reward_fn(config):
@@ -84,12 +84,13 @@ def load_reward_manager(config, tokenizer, num_examine, **reward_kwargs):
     if compute_score is None:
         sandbox_config = config.reward_model.get("sandbox_fusion")
         sandbox_url = sandbox_config.get("url") if sandbox_config else None
+        base_compute_score = _default_compute_score if reward_manager_name == "prime" else _default_compute_score_with_extra_info
         if sandbox_url:
             sandbox_manager = multiprocessing.Manager()
             _concurrent_semaphore = sandbox_manager.Semaphore(sandbox_config.get("max_concurrent", 64))
-            final_compute_score = partial(_default_compute_score, sandbox_fusion_url=sandbox_url, concurrent_semaphore=_concurrent_semaphore)
+            final_compute_score = partial(base_compute_score, sandbox_fusion_url=sandbox_url, concurrent_semaphore=_concurrent_semaphore)
         else:
-            final_compute_score = _default_compute_score
+            final_compute_score = base_compute_score
 
     if reward_manager_name != "dapo":
         return reward_manager_cls(

@@ -144,6 +144,7 @@ class DAPORewardManager:
             assert self.max_resp_len is not None, f"max_resp_len must be provided if {overlong_buffer_cfg=}, but got None"
 
     def __call__(self, data: DataProto, return_dict: bool = False):
+        start_time = time.time()
         reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
         reward_extra_info = defaultdict(list)
 
@@ -151,7 +152,9 @@ class DAPORewardManager:
 
         # batched scoring
         response_ids = data.batch['responses']
+        decode_start = time.time()
         responses_str = self.tokenizer.batch_decode(response_ids, skip_special_tokens=True)
+        decode_batch_time = time.time() - decode_start
         ground_truths = [data_item.non_tensor_batch['reward_model']['ground_truth'] for data_item in data]
         data_sources = data.non_tensor_batch['data_source']
         extra_infos = data.non_tensor_batch.get('extra_info', None)
@@ -161,6 +164,7 @@ class DAPORewardManager:
             # Tune num_processes and timeout via env vars for faster reward scoring
             num_procs = int(os.environ.get("REWARD_NUM_PROCESSES", "16"))
             reward_timeout = int(os.environ.get("REWARD_TIMEOUT", "60"))
+            score_start = time.time()
             results = run_reward_scoring(
                 self.compute_score,
                 completions=responses_str,
@@ -170,6 +174,7 @@ class DAPORewardManager:
                 num_processes=num_procs,
                 timeout=reward_timeout,
             )
+            score_time = time.time() - score_start
         except asyncio.TimeoutError as e:
             print('Global timeout in reward computing! Setting all as 0.')
             results = [{
@@ -188,7 +193,9 @@ class DAPORewardManager:
                 "extracted_gt": gt,
                 # "extracted_pred": None,
             } for gt in ground_truths]
+            score_time = 0.0
         
+        postprocess_start = time.time()
         for i in range(len(data)):
             data_item = data[i]  # DataProtoItem
             result = results[i]
@@ -253,6 +260,14 @@ class DAPORewardManager:
                         print(f"[{key}]", value)
                 else:
                     print(f"[score]", score)
+
+        postprocess_time = time.time() - postprocess_start
+        total_time = time.time() - start_time
+        batch_size = len(data)
+        reward_extra_info["reward_timing/decode_batch"].extend([decode_batch_time] * batch_size)
+        reward_extra_info["reward_timing/score"].extend([score_time] * batch_size)
+        reward_extra_info["reward_timing/postprocess"].extend([postprocess_time] * batch_size)
+        reward_extra_info["reward_timing/total"].extend([total_time] * batch_size)
 
         if return_dict:
             return {

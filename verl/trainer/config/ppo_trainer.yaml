@@ -64,6 +64,7 @@ actor_rollout_ref:
     dynamic_pos_k_percent: False
     dynamic_neg_k_percent: False
     dynamic_coef: 1.0
+    use_dynamic_lp_reg: False
     prob_alpha: 1.0
     prob_eps: 0.01
     use_clip: True

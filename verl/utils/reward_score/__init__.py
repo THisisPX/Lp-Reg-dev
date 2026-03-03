@@ -113,3 +113,76 @@ def _default_compute_score(
         print(f"[ERROR] Error in process_completion for task : {str(e)}")
         traceback.print_exc()  # 打印完整堆栈
         raise  # 重新抛出异常以便上层捕获
+
+
+def _summarize_code_metadata(metadata_list):
+    if not metadata_list:
+        return 1.0, 1.0
+    status_values = []
+    for metadata in metadata_list:
+        if isinstance(metadata, dict):
+            status_values.append(metadata.get("status"))
+    if not status_values:
+        return 1.0, 1.0
+    compile_failure_status = {"compile_error", "compile_timeout", "compile_error_skipped"}
+    compile_success = True
+    test_success = True
+    for status in status_values:
+        if status in compile_failure_status:
+            compile_success = False
+        if status != "success":
+            test_success = False
+    return float(compile_success), float(test_success)
+
+
+def _default_compute_score_with_extra_info(
+    data_source,
+    solution_str,
+    ground_truth,
+    extra_info=None,
+    sandbox_fusion_url=None,
+    concurrent_semaphore=None,
+    zero=False,
+    use_compute_score_v2=False,
+):
+    try:
+        is_code_task = data_source in {"codecontests", "apps", "codeforces", "taco", "prime_code", "code"}
+        if is_code_task:
+            if sandbox_fusion_url:
+                from . import sandbox_fusion
+
+                score, metadata_list = sandbox_fusion.compute_score(
+                    sandbox_fusion_url,
+                    concurrent_semaphore,
+                    solution_str,
+                    ground_truth,
+                    continuous=True,
+                )
+            else:
+                from . import prime_code
+
+                score, metadata_list = prime_code.compute_score(solution_str, ground_truth, continuous=True)
+            compile_success, test_success = _summarize_code_metadata(metadata_list)
+            return {
+                "score": float(score),
+                "acc": test_success,
+                "compile_success": compile_success,
+                "test_success": test_success,
+            }
+
+        if zero:
+            score = prime_math.compute_score_v2(solution_str, str(ground_truth)) if use_compute_score_v2 else prime_math.compute_score(solution_str, str(ground_truth))
+        else:
+            score = prime_math.compute_score_v2(solution_str, str(ground_truth)) if use_compute_score_v2 else prime_math.compute_score(solution_str, str(ground_truth))
+        
+        # For non-code tasks, we still return a dict to keep reward_extra_info list lengths consistent
+        return {
+            "score": float(score),
+            "acc": 1.0,
+            "compile_success": 1.0,
+            "test_success": 1.0,
+        }
+    except Exception as e:
+        print(f"[ERROR] Error in process_completion for task : {str(e)}")
+        traceback.print_exc()
+        raise

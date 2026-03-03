@@ -479,6 +479,7 @@ class DataParallelPPOActor(BasePPOActor):
 
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
+        dynamic_lambda = data.meta_info.get("dynamic_lambda", self.config.ppo_kl_coef)
         # data.batch["entropy"] is entropy of \pi_old
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if self.config.minp_old_log_prob:
@@ -641,6 +642,7 @@ class DataParallelPPOActor(BasePPOActor):
                                 minp_old_log_prob = data["minp_old_log_probs"]
                                 pos_tgt_log_prob, neg_tgt_log_prob = minp_old_log_prob.detach(), minp_old_log_prob.detach()
 
+                        ppo_kl_coef = dynamic_lambda
                         pg_loss, pg_clipfrac, ppo_kl = compute_policy_loss_lp_reg(
                             old_log_prob=old_log_prob,
                             log_prob=log_prob,
@@ -654,7 +656,7 @@ class DataParallelPPOActor(BasePPOActor):
                             loss_agg_mode=loss_agg_mode,
                             logp_pos_k_percent=self.config.logp_pos_k_percent,
                             logp_neg_k_percent=self.config.logp_neg_k_percent,
-                            ppo_kl_coef=self.config.ppo_kl_coef,
+                            ppo_kl_coef=ppo_kl_coef,
                             kl_type=self.config.kl_type,
                         )
                     
@@ -690,6 +692,7 @@ class DataParallelPPOActor(BasePPOActor):
                         "actor/pg_loss": pg_loss.detach().item(),
                         "actor/pg_clipfrac": pg_clipfrac.detach().item(),
                         "actor/ppo_kl": ppo_kl.detach().item(),
+                        "actor/ppo_kl_coef": float(ppo_kl_coef),
                         # "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
                     }
                     append_to_dict(metrics, data)

@@ -170,6 +170,61 @@ class RayDAPOTrainer(RayPPOTrainer):
                         if reward_extra_infos_dict:
                             new_batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
+                        compile_success_rate = 1.0
+                        compile_success_list = reward_extra_infos_dict.get("compile_success")
+                        if compile_success_list:
+                            compile_values = [v for v in compile_success_list if v is not None]
+                            if compile_values:
+                                compile_success_rate = float(np.mean(np.array(compile_values, dtype=np.float32)))
+
+                        acc_rate = None
+                        acc_list = reward_extra_infos_dict.get("acc")
+                        if acc_list is None:
+                            acc_list = reward_extra_infos_dict.get("test_success")
+                        if acc_list is None and "acc" in new_batch.batch:
+                            acc_list = new_batch.batch["acc"]
+                        if acc_list is not None:
+                            if isinstance(acc_list, torch.Tensor):
+                                acc_list = acc_list.detach().cpu().tolist()
+                            acc_values = [float(v) for v in acc_list if v is not None]
+                            if acc_values:
+                                acc_rate = float(np.mean(np.array(acc_values, dtype=np.float32)))
+
+                        dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef
+                        dynamic_rule_id = 0
+                        if self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False):
+                            if compile_success_rate < 0.5:
+                                dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef * 0.5
+                                dynamic_rule_id = 1
+                            elif compile_success_rate > 0.8 and acc_rate is not None and acc_rate < 0.2:
+                                dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef * 2.0
+                                dynamic_rule_id = 2
+
+                        new_batch.meta_info["dynamic_lambda"] = dynamic_lambda
+                        metrics["training/dynamic_lambda"] = dynamic_lambda
+                        metrics["training/compile_success_rate"] = compile_success_rate
+                        metrics["training/acc_rate"] = -1.0 if acc_rate is None else acc_rate
+                        metrics["training/ppo_kl_coef_base"] = float(self.config.actor_rollout_ref.actor.ppo_kl_coef)
+                        metrics["training/dynamic_lambda_multiplier"] = 0.0 if self.config.actor_rollout_ref.actor.ppo_kl_coef == 0 else float(dynamic_lambda) / float(self.config.actor_rollout_ref.actor.ppo_kl_coef)
+                        metrics["training/dynamic_lp_reg_enabled"] = 1.0 if self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False) else 0.0
+                        metrics["training/dynamic_rule_id"] = float(dynamic_rule_id)
+                        print(
+                            "dynamic_lp_reg_debug:",
+                            "enabled=",
+                            self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False),
+                            "compile_success_rate=",
+                            compile_success_rate,
+                            "acc_rate=",
+                            -1.0 if acc_rate is None else acc_rate,
+                            "base=",
+                            float(self.config.actor_rollout_ref.actor.ppo_kl_coef),
+                            "dynamic_lambda=",
+                            float(dynamic_lambda),
+                            "rule_id=",
+                            dynamic_rule_id,
+                            flush=True,
+                        )
+
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
                             new_batch, kl_metrics = apply_kl_penalty(new_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty)

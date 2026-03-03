@@ -23,6 +23,10 @@ algorithm:
     metric: null # acc / score / seq_reward / seq_final_reward / ...
     max_num_gen_batches: 0 # Non-positive values mean no upper limit
 
+actor_rollout_ref:
+  actor:
+    use_dynamic_lp_reg: False
+
 trainer:
   entity_name: your_wandb_entity
   project_name: your_wandb_project

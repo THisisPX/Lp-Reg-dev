@@ -938,6 +938,17 @@ class RayPPOTrainer:
             default_backend=self.config.trainer.logger,
             config=OmegaConf.to_container(self.config, resolve=True),
         )
+        print("ray_trainer_file:", __file__, flush=True)
+        print(
+            "dynamic_lp_reg_config:",
+            "enabled=",
+            self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False),
+            "ppo_kl_coef=",
+            float(self.config.ppo_kl_coef),
+            "logger=",
+            self.config.trainer.logger,
+            flush=True,
+        )
 
         self.global_steps = 0
 

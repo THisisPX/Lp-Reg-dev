@@ -6,12 +6,13 @@ set -xeuo pipefail
 
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
-exp_name="Qwen3_1_5b_lp_reg_dynamic-$(date +%Y%m%d_%H%M%S)"
+# TODO: 修改为您想要resume的实验名称
+exp_name="success-base-Qwen3_1_5b_lp_reg_onpolicy_gpu-20260302_200533"
 
 # Logs directory
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
-LOG_FILE="${LOGS_DIR}/${exp_name}.log"
+LOG_FILE="${LOGS_DIR}/${exp_name}_resume_dynamic.log"
 
 adv_estimator=grpo
 
@@ -62,7 +63,8 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 # MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-8B-Base"}
 MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
 
-CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
+# TODO: 修改为您想要resume的checkpoint目录
+CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/lp-reg/Qwen3_1_5b_lp_reg_onpolicy_gpu-20260303_163431"}
 # NOTE: switching dataset to the code corpus. Changing datasets may require
 # adjustments to the reward function and reward-model configuration.
 TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/train-code.parquet"}

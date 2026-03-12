@@ -7,12 +7,12 @@ set -xeuo pipefail
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
 # TODO: 修改为您想要resume的实验名称
-exp_name="success-base-Qwen3_1_5b_lp_reg_onpolicy_gpu-20260302_200533"
+exp_name="Qwen3_1_5b_lp_reg_resume_dynamic"
 
 # Logs directory
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
-LOG_FILE="${LOGS_DIR}/${exp_name}_resume_dynamic.log"
+LOG_FILE="${LOGS_DIR}/${exp_name}.log"
 
 adv_estimator=grpo
 
@@ -64,7 +64,7 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
 
 # TODO: 修改为您想要resume的checkpoint目录
-CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/lp-reg/Qwen3_1_5b_lp_reg_onpolicy_gpu-20260303_163431"}
+CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/lp-reg/Qwen3_1_5b_lp_reg_dynamic-20260309_152309"}
 # NOTE: switching dataset to the code corpus. Changing datasets may require
 # adjustments to the reward function and reward-model configuration.
 TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/train-code.parquet"}
@@ -210,5 +210,6 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     trainer.total_epochs=3 \
     trainer.save_train_samples_freq=32 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable \
+    trainer.resume_mode=auto \
+    trainer.resume_from_path="${CKPTS_DIR}" \
     2>&1 | tee "${LOG_FILE}"

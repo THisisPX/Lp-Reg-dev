@@ -6,12 +6,12 @@ set -xeuo pipefail
 
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
-exp_name="Qwen3_1_5b_lp_reg_base-$(date +%Y%m%d_%H%M%S)"
+exp_name="Qwen3_7b_lp_reg_dynamic-20260311_181101"
 
 # Logs directory
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
-LOG_FILE="${LOGS_DIR}/${exp_name}.log"
+LOG_FILE="${LOGS_DIR}/${exp_name}_resume_200.log"
 
 adv_estimator=grpo
 
@@ -47,10 +47,10 @@ enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=-1
 train_prompt_bsz=256
-gen_prompt_bsz=256
+gen_prompt_bsz=32
 train_prompt_mini_bsz=256
-n_resp_per_prompt=5
-max_token=$((1024 * 8))
+n_resp_per_prompt=2
+max_token=$((1024 * 4))
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
@@ -60,7 +60,7 @@ NNODES=1 # set your node number here
 # Paths
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 # MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen3-8B-Base"}
-MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
+MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-7B-Instruct"}
 
 CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
 # NOTE: switching dataset to the code corpus. Changing datasets may require
@@ -150,7 +150,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
-    actor_rollout_ref.actor.use_dynamic_lp_reg=False \
+    actor_rollout_ref.actor.use_dynamic_lp_reg=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
@@ -173,7 +173,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
@@ -203,10 +203,10 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=True \
-    trainer.test_freq=10 \
-    trainer.save_freq=10 \
+    trainer.test_freq=50 \
+    trainer.save_freq=50 \
     trainer.total_epochs=3 \
     trainer.save_train_samples_freq=32 \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=disable \
+    trainer.resume_mode=auto \
     2>&1 | tee "${LOG_FILE}"

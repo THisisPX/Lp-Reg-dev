@@ -190,6 +190,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                             if acc_values:
                                 acc_rate = float(np.mean(np.array(acc_values, dtype=np.float32)))
 
+                        
                         dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef
                         dynamic_rule_id = 0
                         if self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False):
@@ -199,6 +200,8 @@ class RayDAPOTrainer(RayPPOTrainer):
                             elif compile_success_rate > 0.8 and acc_rate is not None and acc_rate < 0.2:
                                 dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef * 2.0
                                 dynamic_rule_id = 2
+                            else:
+                                dynamic_lambda = dynamic_lambda
 
                         new_batch.meta_info["dynamic_lambda"] = dynamic_lambda
                         metrics["training/dynamic_lambda"] = dynamic_lambda

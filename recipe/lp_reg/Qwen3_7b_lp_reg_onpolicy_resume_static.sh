@@ -11,7 +11,7 @@ exp_name="Qwen3_7b_lp_reg_base-20260311_173135"
 # Logs directory
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
-LOG_FILE="${LOGS_DIR}/${exp_name}_resume_200.log"
+LOG_FILE="${LOGS_DIR}/${exp_name}_resume_400.log"
 
 adv_estimator=grpo
 

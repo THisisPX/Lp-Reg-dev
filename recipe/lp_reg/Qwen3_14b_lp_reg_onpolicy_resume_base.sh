@@ -7,7 +7,7 @@ set -xeuo pipefail
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
 # TODO: 修改为您想要resume的实验名称
-exp_name="Qwen3_1_5b_lp_reg_base-20260311_112945"
+exp_name="Qwen3_1_5b_lp_reg_resume-base"
 
 # Logs directory
 LOGS_DIR="${PWD}/logs"
@@ -64,7 +64,7 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
 
 # TODO: 修改为您想要resume的checkpoint目录
-CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
+CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/Qwen3_1_5b_lp_reg_base-20260311_112945"}
 
 # NOTE: switching dataset to the code corpus. Changing datasets may require
 # adjustments to the reward function and reward-model configuration.

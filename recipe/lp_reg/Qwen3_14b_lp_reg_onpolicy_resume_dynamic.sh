@@ -12,7 +12,7 @@ exp_name="Qwen3_1_5b_lp_reg_resume_dynamic"
 # Logs directory
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
-LOG_FILE="${LOGS_DIR}/${exp_name}.log"
+LOG_FILE="${LOGS_DIR}/${exp_name}_resume_20.log"
 
 adv_estimator=grpo
 
@@ -64,7 +64,7 @@ RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
 MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
 
 # TODO: 修改为您想要resume的checkpoint目录
-CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/lp-reg/Qwen3_1_5b_lp_reg_dynamic-20260309_152309"}
+CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/lp-reg/Qwen3_1_5b_lp_reg_dynamic-20260311_112915"}
 # NOTE: switching dataset to the code corpus. Changing datasets may require
 # adjustments to the reward function and reward-model configuration.
 TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/train-code.parquet"}

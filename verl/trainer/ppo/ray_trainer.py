@@ -1108,18 +1108,28 @@ class RayPPOTrainer:
                             if acc_values:
                                 acc_rate = float(np.mean(np.array(acc_values, dtype=np.float32)))
 
+                        base_minp_threshold = float(self.config.actor_rollout_ref.actor.get("minp_p_threshold", 0.1))
+                        dynamic_minp_p_threshold = base_minp_threshold
+                        forking_topk_percent = float(self.config.actor_rollout_ref.actor.get("forking_topk_percent", 0.2))
                         dynamic_lambda = self.config.ppo_kl_coef
                         dynamic_rule_id = 0
                         if self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False):
                             if compile_success_rate < 0.5:
                                 dynamic_lambda = self.config.ppo_kl_coef * 0.5
+                                dynamic_minp_p_threshold = min(0.5, base_minp_threshold * 1.2)
                                 dynamic_rule_id = 1
                             elif compile_success_rate > 0.8 and acc_rate is not None and acc_rate < 0.2:
                                 dynamic_lambda = self.config.ppo_kl_coef * 2.0
+                                dynamic_minp_p_threshold = max(0.01, base_minp_threshold * 0.8)
                                 dynamic_rule_id = 2
 
                         batch.meta_info["dynamic_lambda"] = dynamic_lambda
+                        batch.meta_info["dynamic_minp_p_threshold"] = dynamic_minp_p_threshold
+                        batch.meta_info["forking_topk_percent"] = forking_topk_percent
                         metrics["training/dynamic_lambda"] = dynamic_lambda
+                        metrics["training/dynamic_minp_p_threshold"] = dynamic_minp_p_threshold
+                        metrics["training/minp_p_threshold_base"] = base_minp_threshold
+                        metrics["training/forking_topk_percent"] = forking_topk_percent
                         metrics["training/compile_success_rate"] = compile_success_rate
                         metrics["training/acc_rate"] = -1.0 if acc_rate is None else acc_rate
                         metrics["training/ppo_kl_coef_base"] = float(self.config.ppo_kl_coef)
@@ -1138,6 +1148,8 @@ class RayPPOTrainer:
                             float(self.config.ppo_kl_coef),
                             "dynamic_lambda=",
                             float(dynamic_lambda),
+                            "dynamic_minp_p_threshold=",
+                            float(dynamic_minp_p_threshold),
                             "rule_id=",
                             dynamic_rule_id,
                             flush=True,

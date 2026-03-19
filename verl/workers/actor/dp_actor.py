@@ -109,7 +109,7 @@ class DataParallelPPOActor(BasePPOActor):
         modified_logits = torch.cat(modified_logits, dim=0).detach()
         return modified_logits  # return modified cloned tensor
 
-    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False, min_p=0, minp_soft=False, regular_type="minp", save_top_k=0) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
+    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False, calculate_max_prob=False, min_p=0, minp_soft=False, regular_type="minp", save_top_k=0) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         """
         Returns:
             entropy: # (bs, response_len)
@@ -118,6 +118,8 @@ class DataParallelPPOActor(BasePPOActor):
             top_k_input_ids: # (bs, response_len, save_top_k) - only when save_top_k > 0
         """
         response_length = micro_batch["responses"].size(-1)
+        if calculate_max_prob and save_top_k > 0:
+            raise ValueError("calculate_max_prob does not support save_top_k > 0")
         multi_modal_inputs = {}
         if "multi_modal_inputs" in micro_batch:
             for key in micro_batch["multi_modal_inputs"][0].keys():
@@ -133,6 +135,7 @@ class DataParallelPPOActor(BasePPOActor):
             attention_mask = micro_batch["attention_mask"]
             position_ids = micro_batch["position_ids"]
             entropy = None
+            max_token_prob = None
             if position_ids.dim() == 3:  # qwen2vl mrope
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
 
@@ -187,6 +190,8 @@ class DataParallelPPOActor(BasePPOActor):
                         input_ids=input_ids_rmpad_rolled,
                         temperature=temperature,
                     )
+                    if calculate_max_prob:
+                        max_prob_rmpad = torch.exp(log_probs)
 
                 else:
                     logits_rmpad = output.logits.squeeze(0)  # (total_nnz, vocab_size)
@@ -211,6 +216,10 @@ class DataParallelPPOActor(BasePPOActor):
                     # compute entropy
                     if calculate_entropy:
                         entropy_rmpad = self.compute_entropy_from_logits(logits_rmpad)  # ((total_nnz / sp) + pad)
+                    if calculate_max_prob:
+                        max_logit = torch.max(logits_rmpad, dim=-1).values
+                        logsumexp_logit = torch.logsumexp(logits_rmpad, dim=-1)
+                        max_prob_rmpad = torch.exp(max_logit - logsumexp_logit)
 
                 # gather log_prob if sp > 1
                 if self.use_ulysses_sp:
@@ -224,6 +233,13 @@ class DataParallelPPOActor(BasePPOActor):
                     if calculate_entropy:
                         entropy_rmpad = gather_outpus_and_unpad(
                             entropy_rmpad,
+                            gather_dim=0,
+                            unpad_dim=0,
+                            padding_size=pad_size,
+                        )
+                    if calculate_max_prob:
+                        max_prob_rmpad = gather_outpus_and_unpad(
+                            max_prob_rmpad,
                             gather_dim=0,
                             unpad_dim=0,
                             padding_size=pad_size,
@@ -242,11 +258,20 @@ class DataParallelPPOActor(BasePPOActor):
                     batch=batch_size,
                     seqlen=seqlen,
                 )
+                if calculate_max_prob:
+                    full_max_prob = pad_input(
+                        hidden_states=max_prob_rmpad.unsqueeze(-1),
+                        indices=indices,
+                        batch=batch_size,
+                        seqlen=seqlen,
+                    )
 
                 # only return response part:
                 if calculate_entropy:
                     entropy = full_entropy.squeeze(-1)[:, -response_length - 1 : -1]  # (bsz, response_length)
                 log_probs = full_log_probs.squeeze(-1)[:, -response_length - 1 : -1]  # (bsz, response_length)
+                if calculate_max_prob:
+                    max_token_prob = full_max_prob.squeeze(-1)[:, -response_length - 1 : -1]
 
                 if save_top_k > 0:
                     # calculate top-k log_probs and corresponding token_ids
@@ -312,6 +337,8 @@ class DataParallelPPOActor(BasePPOActor):
                         input_ids=micro_batch["responses"],
                         temperature=temperature,
                     )
+                    if calculate_max_prob:
+                        max_token_prob = torch.exp(log_probs)
 
                 else:
                     logits = output.logits
@@ -325,6 +352,10 @@ class DataParallelPPOActor(BasePPOActor):
                     log_probs = logprobs_from_logits(logits, micro_batch["responses"])
                     if calculate_entropy:
                         entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                    if calculate_max_prob:
+                        max_logit = torch.max(logits, dim=-1).values
+                        logsumexp_logit = torch.logsumexp(logits, dim=-1)
+                        max_token_prob = torch.exp(max_logit - logsumexp_logit)
                     
                     if save_top_k > 0:
                         # calculate top-k log_probs and corresponding token_ids
@@ -339,6 +370,8 @@ class DataParallelPPOActor(BasePPOActor):
                             topk_logits = topk_logits / temperature
                             top_k_log_probs = torch.log_softmax(topk_logits, dim=-1)  # (bsz, response_length, save_top_k)
                             top_k_input_ids = topk_indices  # (bsz, response_length, save_top_k)
+            if calculate_max_prob:
+                return entropy, log_probs, max_token_prob
             if save_top_k > 0:
                 return entropy, log_probs, top_k_log_probs, top_k_input_ids
             else:
@@ -480,6 +513,8 @@ class DataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
         dynamic_lambda = data.meta_info.get("dynamic_lambda", self.config.ppo_kl_coef)
+        dynamic_minp_p_threshold = data.meta_info.get("dynamic_minp_p_threshold", self.config.minp_p_threshold)
+        forking_topk_percent = data.meta_info.get("forking_topk_percent", self.config.get("forking_topk_percent", 0.2))
         # data.batch["entropy"] is entropy of \pi_old
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if self.config.minp_old_log_prob:
@@ -547,14 +582,26 @@ class DataParallelPPOActor(BasePPOActor):
                     
 
                     # all return: (bsz, response_length)
-                    calculate_entropy = False
-                    if entropy_coeff != 0 or loss_mode == "8020_split":
-                        calculate_entropy = True
-                    entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature, calculate_entropy=calculate_entropy)
+                    calculate_entropy = entropy_coeff != 0 or loss_mode in ["8020_split", "lp_reg"]
+                    max_token_prob = None
+                    if loss_mode == "lp_reg":
+                        entropy, log_prob, max_token_prob = self._forward_micro_batch(
+                            micro_batch=data,
+                            temperature=temperature,
+                            calculate_entropy=calculate_entropy,
+                            calculate_max_prob=True,
+                        )
+                    else:
+                        entropy, log_prob = self._forward_micro_batch(
+                            micro_batch=data,
+                            temperature=temperature,
+                            calculate_entropy=calculate_entropy,
+                        )
 
                     if self.config.use_kl_loss:
                         ref_log_prob = data["ref_log_prob"]
                     
+                    ppo_kl_coef = self.config.ppo_kl_coef
                     if loss_mode == "vanilla":
                         pg_loss, pg_clipfrac, ppo_kl = compute_policy_loss(
                             old_log_prob=old_log_prob,
@@ -631,7 +678,7 @@ class DataParallelPPOActor(BasePPOActor):
                                 minp_pos_tgt_temperature = self.config.minp_pos_tgt_temperature
                                 minp_neg_tgt_temperature = self.config.minp_neg_tgt_temperature
                                 minp_soft = self.config.minp_soft
-                                minp_p_threshold = self.config.minp_p_threshold
+                                minp_p_threshold = dynamic_minp_p_threshold
                                 regular_type = self.config.regular_type
                                 _, pos_tgt_log_prob = self._forward_micro_batch(micro_batch=data, temperature=minp_pos_tgt_temperature, calculate_entropy=False, min_p=minp_p_threshold, minp_soft=minp_soft, regular_type=regular_type)
                                 pos_tgt_log_prob = pos_tgt_log_prob.detach()
@@ -658,6 +705,10 @@ class DataParallelPPOActor(BasePPOActor):
                             logp_neg_k_percent=self.config.logp_neg_k_percent,
                             ppo_kl_coef=ppo_kl_coef,
                             kl_type=self.config.kl_type,
+                            entropy=entropy,
+                            max_token_prob=max_token_prob,
+                            forking_topk_percent=forking_topk_percent,
+                            minp_p_threshold=dynamic_minp_p_threshold,
                         )
                     
                     else:

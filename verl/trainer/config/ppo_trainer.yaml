@@ -54,6 +54,7 @@ actor_rollout_ref:
     minp_pos_tgt_temperature: 1.0
     minp_neg_tgt_temperature: 1.0
     minp_p_threshold: 0.1
+    forking_topk_percent: 0.2
     minp_soft: False
     k_percent: 0.2
     pos_k_percent: 0 # will be deprecated, now used by quadrant loss

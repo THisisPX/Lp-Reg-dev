@@ -25,6 +25,7 @@ minp_p_threshold=0.02
 logp_pos_k_percent=0
 logp_neg_k_percent=0.01
 dynamic_coef=1.0
+forking_topk_percent=0.2
 
 
 
@@ -141,6 +142,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.logp_neg_k_percent=${logp_neg_k_percent} \
     actor_rollout_ref.actor.dynamic_coef=${dynamic_coef} \
     actor_rollout_ref.actor.minp_p_threshold=${minp_p_threshold} \
+    actor_rollout_ref.actor.forking_topk_percent=${forking_topk_percent} \
     actor_rollout_ref.actor.ppo_kl_coef=${ppo_kl_coef} \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.mode=sync \
@@ -150,7 +152,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
-    actor_rollout_ref.actor.use_dynamic_lp_reg=False \
+    actor_rollout_ref.actor.use_dynamic_lp_reg=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \

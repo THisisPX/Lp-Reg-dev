@@ -660,6 +660,10 @@ def compute_policy_loss_lp_reg(
     logp_neg_k_percent=0.01,
     ppo_kl_coef=1,
     kl_type="low_var_kl",
+    entropy=None,
+    max_token_prob=None,
+    forking_topk_percent=0.2,
+    minp_p_threshold=0.1,
 ):
 
     if cliprange_low is None:
@@ -684,7 +688,6 @@ def compute_policy_loss_lp_reg(
     with torch.no_grad():
         pg_clipfrac = verl_F.masked_mean((pg_losses2 > pg_losses1).float(), response_mask)
     
-    # find valid indices
     all_valid_mask = response_mask > 0
     all_valid_flat_idx = all_valid_mask.reshape(-1).nonzero(as_tuple=True)[0]
     
@@ -692,24 +695,38 @@ def compute_policy_loss_lp_reg(
         pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
         return pg_loss, pg_clipfrac, ppo_kl_mean
 
-    # get sequence length for index conversion
     _, seq_len = advantages.shape
     advantages_flat = advantages.reshape(-1)
     log_prob_flat = log_prob.reshape(-1)
-    
-    # find positive and negative sample indices
-    pos_indices = all_valid_flat_idx[advantages_flat[all_valid_flat_idx] > 0]
-    neg_indices = all_valid_flat_idx[advantages_flat[all_valid_flat_idx] < 0]
+
+    if entropy is None or forking_topk_percent <= 0:
+        forking_mask = all_valid_mask
+    else:
+        forking_mask = torch.zeros_like(all_valid_mask, dtype=torch.bool)
+        for batch_idx in range(entropy.size(0)):
+            valid_pos = all_valid_mask[batch_idx].nonzero(as_tuple=True)[0]
+            if valid_pos.numel() == 0:
+                continue
+            topk_num = max(1, int(valid_pos.numel() * forking_topk_percent))
+            entropy_values = entropy[batch_idx, valid_pos]
+            _, topk_local = torch.topk(entropy_values, k=topk_num, largest=True)
+            selected_pos = valid_pos[topk_local]
+            forking_mask[batch_idx, selected_pos] = True
+
+    if max_token_prob is None:
+        max_token_prob = torch.ones_like(log_prob)
+    token_prob = torch.exp(log_prob.detach())
+    dynamic_tau = minp_p_threshold * max_token_prob.detach()
+    non_noise_mask = token_prob >= dynamic_tau
+
+    lp_reg_indicator = all_valid_mask & forking_mask & non_noise_mask & (advantages < 0)
+    neg_indices = lp_reg_indicator.reshape(-1).nonzero(as_tuple=True)[0]
 
     def apply_kl_penalty_selective(target_flat_idx, tgt_log_prob):
-        print(f"dev_debug: apply_kl_penalty_selective_len: {len(target_flat_idx)}")
         if len(target_flat_idx) == 0:
             return
             
         batch_idx, seq_idx = target_flat_idx // seq_len, target_flat_idx % seq_len
-
-        reg_token_num = (log_prob[batch_idx, seq_idx].detach() < tgt_log_prob[batch_idx, seq_idx]).sum().cpu()
-        print(f"dev_debug: reg_token_num: {reg_token_num}")
 
         mask = log_prob[batch_idx, seq_idx].detach() < tgt_log_prob[batch_idx, seq_idx]
         batch_idx, seq_idx = batch_idx[mask], seq_idx[mask]
@@ -719,21 +736,12 @@ def compute_policy_loss_lp_reg(
 
         target_kl = kl_penalty(log_prob[batch_idx, seq_idx], tgt_log_prob[batch_idx, seq_idx], kl_type)
         pg_losses[batch_idx, seq_idx] = -advantages[batch_idx, seq_idx] * ratio[batch_idx, seq_idx] + ppo_kl_coef * target_kl
-    
-    # positive samples
-    if len(pos_indices) > 0:
-        pos_logp_k = max(1, int(len(pos_indices) * logp_pos_k_percent))
-        if pos_logp_k > 1:
-            with torch.no_grad():
-                pos_logp_values = log_prob_flat[pos_indices]
-                _, pos_logp_indices = pos_logp_values.topk(k=pos_logp_k, largest=False)
-                pos_target_idx = pos_indices[pos_logp_indices]
-            apply_kl_penalty_selective(pos_target_idx, pos_tgt_log_prob)
-    
-    # negative samples
+
     if len(neg_indices) > 0:
-        neg_logp_k = max(1, int(len(neg_indices) * logp_neg_k_percent))
-        if neg_logp_k > 1:
+        neg_logp_k = int(len(neg_indices) * logp_neg_k_percent)
+        if logp_neg_k_percent > 0:
+            neg_logp_k = max(1, neg_logp_k)
+        if neg_logp_k > 0:
             with torch.no_grad():
                 neg_logp_values = log_prob_flat[neg_indices]
                 _, neg_logp_indices = neg_logp_values.topk(k=neg_logp_k, largest=False)

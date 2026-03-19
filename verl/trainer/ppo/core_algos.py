@@ -690,34 +690,23 @@ def compute_policy_loss_lp_reg(
     with torch.no_grad():
         pg_clipfrac = verl_F.masked_mean((pg_losses2 > pg_losses1).float(), response_mask)
 
-    if logic_aware_lp_reg and response_logits is not None and response_tokens is not None:
-        current_probs = torch.softmax(response_logits, dim=-1)
-        boosted_probs = current_probs
-        if logic_token_ids is not None:
-            if logic_token_ids.device != response_tokens.device:
-                logic_token_ids = logic_token_ids.to(response_tokens.device)
-            if logic_token_ids.numel() > 0:
-                logic_mask = torch.isin(response_tokens, logic_token_ids)
-                logic_weights = torch.where(
-                    logic_mask,
-                    torch.full_like(response_tokens, fill_value=logic_boost_factor, dtype=current_probs.dtype),
-                    torch.ones_like(response_tokens, dtype=current_probs.dtype),
-                ).unsqueeze(-1)
-                boosted_probs = boosted_probs * logic_weights
-        max_probabilities = torch.amax(boosted_probs, dim=-1, keepdim=True)
-        threshold = minp_p_threshold * max_probabilities
-        valid_token_mask = boosted_probs >= threshold
-        has_any = valid_token_mask.any(dim=-1, keepdim=True)
-        fallback = torch.zeros_like(valid_token_mask)
-        fallback.scatter_(dim=-1, index=boosted_probs.argmax(dim=-1, keepdim=True), value=True)
-        valid_token_mask = torch.where(has_any, valid_token_mask, fallback)
-        proxy_q = boosted_probs * valid_token_mask
-        proxy_q = proxy_q / proxy_q.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-        proxy_q = proxy_q.detach()
-        proxy_kl = torch.sum(proxy_q * (torch.log(proxy_q.clamp_min(1e-8)) - torch.log(current_probs.clamp_min(1e-8))), dim=-1)
-        pg_losses = pg_losses + ppo_kl_coef * proxy_kl * response_mask
-        pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
-        return pg_loss, pg_clipfrac, ppo_kl_mean
+    if logic_aware_lp_reg and response_tokens is not None and logic_token_ids is not None:
+        if logic_token_ids.device != response_tokens.device:
+            logic_token_ids = logic_token_ids.to(response_tokens.device)
+        
+        # logic_boost_factor 现在作为“惩罚系数权重” (建议设为 0.2 等小于 1 的值)
+        # 以放宽对 logic token 的约束，增加其熵
+        if logic_token_ids.numel() > 0:
+            logic_mask = torch.isin(response_tokens, logic_token_ids)
+            penalty_weights = torch.where(
+                logic_mask,
+                torch.full_like(response_tokens, fill_value=logic_boost_factor, dtype=torch.float),
+                torch.ones_like(response_tokens, dtype=torch.float),
+            )
+        else:
+            penalty_weights = torch.ones_like(response_tokens, dtype=torch.float)
+    else:
+        penalty_weights = None
     
     # find valid indices
     all_valid_mask = response_mask > 0
@@ -753,7 +742,13 @@ def compute_policy_loss_lp_reg(
             return
 
         target_kl = kl_penalty(log_prob[batch_idx, seq_idx], tgt_log_prob[batch_idx, seq_idx], kl_type)
-        pg_losses[batch_idx, seq_idx] = -advantages[batch_idx, seq_idx] * ratio[batch_idx, seq_idx] + ppo_kl_coef * target_kl
+        
+        # Apply the token-level penalty weights if logic_aware_lp_reg is enabled
+        if penalty_weights is not None:
+            current_weights = penalty_weights[batch_idx, seq_idx]
+            pg_losses[batch_idx, seq_idx] = -advantages[batch_idx, seq_idx] * ratio[batch_idx, seq_idx] + ppo_kl_coef * current_weights * target_kl
+        else:
+            pg_losses[batch_idx, seq_idx] = -advantages[batch_idx, seq_idx] * ratio[batch_idx, seq_idx] + ppo_kl_coef * target_kl
     
     # positive samples
     if len(pos_indices) > 0:

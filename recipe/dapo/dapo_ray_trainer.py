@@ -192,6 +192,7 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                         
                         dynamic_lambda = self.config.actor_rollout_ref.actor.ppo_kl_coef
+                         
                         dynamic_rule_id = 0
                         if self.config.actor_rollout_ref.actor.get("use_dynamic_lp_reg", False):
                             if compile_success_rate < 0.5:

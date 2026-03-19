@@ -2,7 +2,7 @@
 set -xeuo pipefail
 
 project_name="lp-reg"
-exp_name="Qwen3_1_5b_lp_reg_logic_aware-$(date +%Y%m%d_%H%M%S)"
+exp_name="Qwen3_7b_lp_reg_reduce_logictoken_penalty_dynamic-$(date +%Y%m%d_%H%M%S)"
 
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
@@ -18,10 +18,6 @@ minp_p_threshold=0.02
 logp_pos_k_percent=0
 logp_neg_k_percent=0.01
 dynamic_coef=1.0
-
-logic_aware_lp_reg=True
-logic_boost_factor=5.0
-logic_token_cache_dir=${LOGIC_TOKEN_CACHE_DIR:-"${HOME}/.cache/verl/logic_tokens"}
 
 use_kl_in_reward=False
 kl_coef=0.0
@@ -42,23 +38,21 @@ enable_filter_groups=False
 filter_groups_metric=acc
 max_num_gen_batches=-1
 train_prompt_bsz=256
-gen_prompt_bsz=256
+gen_prompt_bsz=32
 train_prompt_mini_bsz=256
-n_resp_per_prompt=5
-max_token=$((1024 * 8))
+n_resp_per_prompt=2
+max_token=$((1024 * 4))
 
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=1
-
 RAY_DATA_HOME=${RAY_DATA_HOME:-"${HOME}/verl"}
-MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-1.5B-Instruct"}
+MODEL_PATH=${MODEL_PATH:-"/share/collab/codemodel/models/Qwen/Qwen2.5-Coder-7B-Instruct"}
 
 CKPTS_DIR=${CKPTS_DIR:-"/nfs_global/S/pengxiong/checkpoint/$project_name/$exp_name"}
 TRAIN_FILE=${TRAIN_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/train-code.parquet"}
 TEST_FILE=${TEST_FILE:-"/nfs_global/S/pengxiong/dataset/Eurus-2-RL-Data/validation-code.parquet"}
-
 temperature=1.0
 top_p=1.0
 top_k=-1
@@ -73,6 +67,34 @@ infer_micro_batch_size=null
 train_micro_batch_size=null
 offload=False
 
+logic_aware_lp_reg=True
+logic_penalty_weight=${LOGIC_PENALTY_WEIGHT:-0.2}
+logic_token_ids=${LOGIC_TOKEN_IDS:-}
+
+if [[ -z "${logic_token_ids}" ]]; then
+logic_token_ids=$(MODEL_PATH="${MODEL_PATH}" python3 - <<'PY'
+import json
+import os
+from transformers import AutoTokenizer
+
+model_path = os.environ["MODEL_PATH"]
+tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+vocab = tokenizer.get_vocab()
+keywords = [
+    "if", "for", "while", "break", "continue", "return", "try", "except", "finally",
+    "and", "or", "not", "in", "is", "==", "!=", "<", ">", "<=", ">="
+]
+ids = set()
+for token in keywords:
+    for candidate in (token, f" {token}", f"Ġ{token}", f"▁{token}"):
+        token_id = vocab.get(candidate)
+        if token_id is not None:
+            ids.add(int(token_id))
+print(json.dumps(sorted(ids), separators=(",", ":")))
+PY
+)
+fi
+
 export NCCL_DEBUG=INFO
 export NCCL_SOCKET_IFNAME=lo
 export NCCL_TIMEOUT=1800
@@ -80,15 +102,12 @@ export NCCL_BLOCKING_WAIT=1
 export CUDA_LAUNCH_BLOCKING=1
 export NCCL_IB_DISABLE=1
 export NCCL_NET=Socket
-
 export REWARD_NUM_PROCESSES=${REWARD_NUM_PROCESSES:-16}
 export REWARD_TIMEOUT=${REWARD_TIMEOUT:-60}
 export PRIME_CODE_MAX_SAMPLES=${PRIME_CODE_MAX_SAMPLES:-5}
-
 export MPLCONFIGDIR=/nfs_global/S/pengxiong/tmp/matplotlib_config
 export SEQUENCE_ENTROPY_OUTPUT_DIR="${PWD}/outputs/sequence_entropy"
 mkdir -p "${SEQUENCE_ENTROPY_OUTPUT_DIR}"
-
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
@@ -118,8 +137,8 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.minp_p_threshold=${minp_p_threshold} \
     actor_rollout_ref.actor.ppo_kl_coef=${ppo_kl_coef} \
     actor_rollout_ref.actor.logic_aware_lp_reg=${logic_aware_lp_reg} \
-    actor_rollout_ref.actor.logic_boost_factor=${logic_boost_factor} \
-    actor_rollout_ref.actor.logic_token_cache_dir="${logic_token_cache_dir}" \
+    actor_rollout_ref.actor.logic_penalty_weight=${logic_penalty_weight} \
+    actor_rollout_ref.actor.logic_token_ids=${logic_token_ids} \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.mode=sync \
     algorithm.adv_estimator=${adv_estimator} \
@@ -128,7 +147,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
-    actor_rollout_ref.actor.use_dynamic_lp_reg=False \
+    actor_rollout_ref.actor.use_dynamic_lp_reg=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
@@ -150,7 +169,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
@@ -179,8 +198,8 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=True \
-    trainer.test_freq=10 \
-    trainer.save_freq=10 \
+    trainer.test_freq=50 \
+    trainer.save_freq=50 \
     trainer.total_epochs=3 \
     trainer.save_train_samples_freq=32 \
     trainer.default_local_dir="${CKPTS_DIR}" \

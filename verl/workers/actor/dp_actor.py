@@ -20,7 +20,6 @@ Single Process Actor
 import itertools
 import logging
 import os
-import pickle
 from typing import Tuple, Union
 
 import torch
@@ -75,17 +74,10 @@ class DataParallelPPOActor(BasePPOActor):
             # if self.config.get("use_torch_compile", True):
             #     self.fused_linear_for_ppo.compile(dynamic=True)
         self.logic_aware_lp_reg = self.config.get("logic_aware_lp_reg", False)
-        self.logic_boost_factor = float(self.config.get("logic_boost_factor", 5.0))
+        self.logic_penalty_weight = float(self.config.get("logic_penalty_weight", 0.2))
         logic_token_ids = self.config.get("logic_token_ids", [])
         if logic_token_ids is None:
             logic_token_ids = []
-        if len(logic_token_ids) == 0:
-            logic_token_cache_file = self.config.get("logic_token_cache_file", None)
-            if logic_token_cache_file is not None:
-                logic_token_cache_file = os.path.expanduser(logic_token_cache_file)
-                if os.path.exists(logic_token_cache_file):
-                    with open(logic_token_cache_file, "rb") as f:
-                        logic_token_ids = pickle.load(f)
         self.logic_token_ids = torch.tensor(logic_token_ids, dtype=torch.long) if len(logic_token_ids) > 0 else None
         self._logic_token_ids_device = None
 
@@ -96,36 +88,24 @@ class DataParallelPPOActor(BasePPOActor):
             self._logic_token_ids_device = self.logic_token_ids.to(device)
         return self._logic_token_ids_device
 
-    def apply_min_p(self, logits, min_p=0.1, minp_soft=False, regular_type="minp", label_ids=None):
+    def apply_min_p(self, logits, min_p=0.1, minp_soft=False, regular_type="minp"):
         """ 
         Filters logits using adaptive probability thresholding.
         """
         chunk_size = 4096
         logits_chunks = torch.split(logits.detach(), split_size_or_sections=chunk_size, dim=0)
-        label_chunks = torch.split(label_ids, split_size_or_sections=chunk_size, dim=0) if label_ids is not None else None
         modified_logits = []
-        for idx, logit_chunk in enumerate(logits_chunks):
+        for logit_chunk in logits_chunks:
             cloned_logit_chunk = logit_chunk.clone()
             # calculate probability distribution
             probability_values = torch.nn.functional.softmax(cloned_logit_chunk, dim=-1)
-            boosted_probability_values = probability_values
-            if self.logic_aware_lp_reg and label_chunks is not None and self.logic_token_ids is not None:
-                logic_token_ids = self._get_logic_token_ids(cloned_logit_chunk.device)
-                if logic_token_ids is not None and logic_token_ids.numel() > 0:
-                    logic_positions = torch.isin(label_chunks[idx], logic_token_ids)
-                    logic_position_weights = torch.where(
-                        logic_positions,
-                        torch.full_like(label_chunks[idx], fill_value=self.logic_boost_factor, dtype=probability_values.dtype),
-                        torch.ones_like(label_chunks[idx], dtype=probability_values.dtype),
-                    ).unsqueeze(-1)
-                    boosted_probability_values = probability_values * logic_position_weights
             if regular_type == "minp":
                 print(f"dev_debug: regular_type = {regular_type}")
                 # maximum probability of each token (for dynamic adjustment of threshold)
-                max_probabilities = torch.amax(boosted_probability_values, dim=-1, keepdim=True)
+                max_probabilities = torch.amax(probability_values, dim=-1, keepdim=True)
                 adjusted_min_p = min_p * max_probabilities  # dynamic threshold
                 # generate invalid token mask (tokens with probability below threshold)
-                valid_token_mask = boosted_probability_values >= adjusted_min_p
+                valid_token_mask = probability_values >= adjusted_min_p
                 invalid_mask = ~valid_token_mask  # invalid token mask
 
                 if not minp_soft:
@@ -135,7 +115,7 @@ class DataParallelPPOActor(BasePPOActor):
                     cloned_logit_chunk[invalid_mask] = min_logits[invalid_mask]
             elif regular_type == "fixed":
                 print(f"dev_debug: regular_type = {regular_type}")
-                valid_token_mask = boosted_probability_values >= min_p
+                valid_token_mask = probability_values >= min_p
                 invalid_mask = ~valid_token_mask  # invalid token mask
                 cloned_logit_chunk[invalid_mask] = -1e4
             else:
@@ -229,7 +209,7 @@ class DataParallelPPOActor(BasePPOActor):
                     # import madbg; madbg.set_trace(ip='0.0.0.0', port=1337+torch.distributed.get_rank()) 
                     if min_p > 0:
                         print(f"dev_debug: min_p = {min_p} > 0")
-                        logits_rmpad = self.apply_min_p(logits_rmpad, min_p, minp_soft, regular_type, label_ids=input_ids_rmpad_rolled)
+                        logits_rmpad = self.apply_min_p(logits_rmpad, min_p, minp_soft, regular_type)
 
                     # logits_rmpad = output.logits.squeeze(0)  # (total_nnz, vocab_size)
                     logits_rmpad.div_(temperature)
@@ -370,8 +350,7 @@ class DataParallelPPOActor(BasePPOActor):
 
                     if min_p > 0:
                         print(f"dev_debug: min_p = {min_p} > 0")
-                        label_ids = torch.roll(input_ids, shifts=-1, dims=1)
-                        logits = self.apply_min_p(logits, min_p, minp_soft, regular_type, label_ids=label_ids)
+                        logits = self.apply_min_p(logits, min_p, minp_soft, regular_type)
 
                     logits.div_(temperature)
                     logits = logits[:, -response_length - 1 : -1, :]  # (bsz, response_length, vocab_size)
@@ -387,7 +366,7 @@ class DataParallelPPOActor(BasePPOActor):
                             # get response part of original logits for top-k calculation
                             response_logits = output.logits[:, -response_length - 1 : -1, :]  # (bsz, response_length, vocab_size)
                             if min_p > 0:
-                                response_logits = self.apply_min_p(response_logits, min_p, minp_soft, regular_type, label_ids=micro_batch["responses"])
+                                response_logits = self.apply_min_p(response_logits, min_p, minp_soft, regular_type)
                             
                             # get top-k logits and indices
                             topk_logits, topk_indices = torch.topk(response_logits, k=save_top_k, dim=-1)  # (bsz, response_length, save_top_k)
@@ -728,7 +707,7 @@ class DataParallelPPOActor(BasePPOActor):
                             response_logits=response_logits,
                             response_tokens=data["responses"],
                             logic_token_ids=self._get_logic_token_ids(data["responses"].device),
-                            logic_boost_factor=self.logic_boost_factor,
+                            logic_boost_factor=self.logic_penalty_weight,
                             minp_p_threshold=self.config.minp_p_threshold,
                             logic_aware_lp_reg=self.logic_aware_lp_reg,
                         )

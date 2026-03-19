@@ -154,7 +154,8 @@ export LD_LIBRARY_PATH=/home/S/pengxiong/anaconda3/lib:$LD_LIBRARY_PATH
 
 ip -o link show | awk -F': ' '{print $2}'
 
-bash /workspace/S/pengxiong/verl_proj/Lp-Reg-dev/recipe/lp_reg/Qwen3_14b_lp_reg_onpolicy_resume_static.sh
+bash /workspace/S/pengxiong/verl_proj/Lp-Reg-dev/recipe/lp_reg/Qwen3_14b_lp_reg_onpolicy_resume_base.sh
+# bash /workspace/S/pengxiong/verl_proj/Lp-Reg-dev/recipe/lp_reg/Qwen3_14b_lp_reg_onpolicy_resume_dynamic.sh
 
 # llamafactory-cli export /workspace/S/pengxiong/llama_train/LLaMA-Factory/examples/merge_lora/qwen_moe_lora_sft.yaml
 

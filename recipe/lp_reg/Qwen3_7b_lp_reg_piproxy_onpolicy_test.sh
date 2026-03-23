@@ -2,7 +2,7 @@
 set -xeuo pipefail
 
 project_name="lp-reg"
-exp_name="Qwen3_7b_lp_reg_reduce_logictoken_penalty_dynamic-$(date +%Y%m%d_%H%M%S)"
+exp_name="Qwen3_7b_lp_reg_reduce_logictoken_penalty_rollout5-$(date +%Y%m%d_%H%M%S)"
 
 LOGS_DIR="${PWD}/logs"
 mkdir -p "${LOGS_DIR}"
@@ -40,7 +40,7 @@ max_num_gen_batches=-1
 train_prompt_bsz=256
 gen_prompt_bsz=32
 train_prompt_mini_bsz=256
-n_resp_per_prompt=2
+n_resp_per_prompt=5
 max_token=$((1024 * 4))
 
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
@@ -147,7 +147,7 @@ HYDRA_FULL_ERROR=1 python3 -m recipe.dapo.main_dapo \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
-    actor_rollout_ref.actor.use_dynamic_lp_reg=True \
+    actor_rollout_ref.actor.use_dynamic_lp_reg=False \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \

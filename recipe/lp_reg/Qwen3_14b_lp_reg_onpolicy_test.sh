@@ -6,7 +6,7 @@ set -xeuo pipefail
 
 # entity_name="your_wandb_entity"
 project_name="lp-reg"
-exp_name="Qwen3_1_5b_lp_reg_base-$(date +%Y%m%d_%H%M%S)"
+exp_name="Qwen3_1_5b_lp_reg_topk20-$(date +%Y%m%d_%H%M%S)"
 
 # Logs directory
 LOGS_DIR="${PWD}/logs"
